@@ -37,12 +37,22 @@ def generate_text_embedding(text: str) -> List[float]:
     if not HF_API_TOKEN:
         raise ValueError("HF_API_TOKEN must be set to generate embeddings via Hugging Face Inference API.")
 
-    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HF_EMBEDDING_MODEL}"
+    # Use the models endpoint (recommended)
+    api_url = f"https://api-inference.huggingface.co/models/{HF_EMBEDDING_MODEL}"
     headers = {"Authorization": f"Bearer {HF_API_TOKEN}", "Accept": "application/json"}
     try:
         response = requests.post(api_url, json={"inputs": text, "truncate": True}, headers=headers, timeout=60)
         response.raise_for_status()
         data = response.json()
+    except requests.HTTPError as http_err:
+        status = getattr(http_err.response, "status_code", None)
+        if status == 401:
+            logging.error("HF Inference API unauthorized. Check HF_API_TOKEN permissions.")
+        elif status == 404:
+            logging.error("HF model not found at Inference API. Verify HF_EMBEDDING_MODEL: %s", HF_EMBEDDING_MODEL)
+        else:
+            logging.exception("HF Inference API HTTP error")
+        raise
     except Exception as exc:
         logging.exception("Embedding API request failed")
         raise
