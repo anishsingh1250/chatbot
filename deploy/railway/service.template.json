@@ -1,0 +1,15 @@
+{
+  "name": "chatbot",
+  "services": [
+    {
+      "name": "chatbot-service",
+      "type": "docker",
+      "dockerfilePath": "./Dockerfile",
+      "env": [
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_KEY"
+      ],
+      "ports": [8000]
+    }
+  ]
+}
