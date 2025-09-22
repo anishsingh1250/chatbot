@@ -1,8 +1,9 @@
 import os
 import requests
+import logging
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
 
@@ -22,12 +23,14 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+logging.basicConfig(level=logging.INFO)
+
 # Configure Hugging Face Inference API for embeddings (free-tier friendly)
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 HF_EMBEDDING_MODEL = os.getenv("HF_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 if not HF_API_TOKEN:
-    print("Warning: HF_API_TOKEN not set. Set it to use Hugging Face Inference API for embeddings.")
+    logging.warning("HF_API_TOKEN not set. Set it to use Hugging Face Inference API for embeddings.")
 
 def generate_text_embedding(text: str) -> List[float]:
     """Generate an embedding using Hugging Face Inference API to avoid heavy local models."""
@@ -36,9 +39,13 @@ def generate_text_embedding(text: str) -> List[float]:
 
     api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HF_EMBEDDING_MODEL}"
     headers = {"Authorization": f"Bearer {HF_API_TOKEN}", "Accept": "application/json"}
-    response = requests.post(api_url, json={"inputs": text, "truncate": True}, headers=headers, timeout=60)
-    response.raise_for_status()
-    data = response.json()
+    try:
+        response = requests.post(api_url, json={"inputs": text, "truncate": True}, headers=headers, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        logging.exception("Embedding API request failed")
+        raise
 
     # The API returns nested lists: [token_embeddings] or [sentence_embedding]
     # For sentence-transformers models with pooling, it returns a single vector.
@@ -96,26 +103,38 @@ async def search_knowledge_base(search_query: SearchQuery):
     query = search_query.query
 
     # --- Step 1: Generate an embedding for the user's query (via HF Inference API) ---
-    query_embedding = generate_text_embedding(query)
+    try:
+        query_embedding = generate_text_embedding(query)
+    except ValueError as ve:
+        # Likely missing HF_API_TOKEN
+        raise HTTPException(status_code=503, detail=f"Embedding unavailable: {str(ve)}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Failed to generate embedding from provider")
 
     # --- Step 2: Call the Supabase database function ---
     # We are calling the 'match_health_documents' function we created in the Supabase SQL Editor.
-    response = supabase.rpc('match_health_documents', {
-        'query_embedding': query_embedding,
-        'match_threshold': 0.70,  # Adjust this for more/less strict matching
-        'match_count': 3          # Get the top 3 most relevant chunks
-    }).execute()
+    try:
+        response = supabase.rpc('match_health_documents', {
+            'query_embedding': query_embedding,
+            'match_threshold': 0.70,
+            'match_count': 3
+        }).execute()
+    except Exception as exc:
+        logging.exception("Supabase RPC call failed")
+        raise HTTPException(status_code=502, detail="Vector search failed")
 
     # --- Step 3: Process the results and create the context ---
     context = ""
     sources = []
     
-    if response.data:
+    if getattr(response, 'data', None):
         # Combine the content of the matched documents into a single string
         context = "\n\n---\n\n".join([item['content'] for item in response.data])
         
         # Collect the unique sources from the metadata
         sources = list(set([item['metadata']['source'] for item in response.data]))
+    else:
+        logging.info("No matches returned from Supabase for query")
 
     return {"context": context, "sources": sources}
 
