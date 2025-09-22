@@ -5,10 +5,11 @@ This repository contains a Python FastAPI service that powers a small health cha
 - `GET /` — health check returning `{ "status": "API is running." }`
 - `POST /search` — search endpoint used by the chatbot frontend (expects JSON body `{ "query": "..." }`).
 
-The project uses `sentence-transformers` to generate embeddings and `supabase` as a vector store. Environment variables (stored in `.env` locally or in your hosting secret manager) expected:
+The project uses Hugging Face Inference API for embeddings (free-tier friendly) and `supabase` as a vector store. Environment variables (stored in `.env` locally or in your hosting secret manager) expected:
 
 - SUPABASE_URL
 - SUPABASE_SERVICE_KEY
+- HF_API_TOKEN (Hugging Face token; free tier works). Optional `HF_EMBEDDING_MODEL` (default `sentence-transformers/all-MiniLM-L6-v2`).
 
 ## Building and running locally (Docker)
 
@@ -29,8 +30,9 @@ Important: `sentence-transformers` and `torch` produce large images and long bui
 
 1. Create a Render account and a new "Web Service".
 2. Connect your GitHub repo and choose the `main` branch.
-3. Choose to deploy from Dockerfile, set the port to `8000`.
+3. Choose to deploy from Dockerfile, set the port to `8000` (auto in this repo).
 4. Add secrets in Render's dashboard (e.g., `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`).
+   - For free plan: also add `HF_API_TOKEN` to avoid local model downloads.
 5. Deploy — Render builds the image and runs it.
 
 ### Fly.io

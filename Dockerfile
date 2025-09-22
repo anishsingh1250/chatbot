@@ -3,10 +3,7 @@ FROM python:3.11-slim
 # Set a working directory
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# No extra system packages required for the slimmed dependencies
 
 # Copy requirements and install
 COPY requirements.txt ./

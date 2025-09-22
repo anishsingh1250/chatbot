@@ -1,7 +1,7 @@
 import os
+import requests
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from sentence_transformers import SentenceTransformer
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
@@ -22,11 +22,44 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Load the sentence-transformer model
-# This is done once when the API starts up, so it's ready for all requests.
-print("Loading sentence-transformer model...")
-model = SentenceTransformer('all-MiniLM-L6-v2')
-print("Model loaded successfully.")
+# Configure Hugging Face Inference API for embeddings (free-tier friendly)
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")
+HF_EMBEDDING_MODEL = os.getenv("HF_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
+if not HF_API_TOKEN:
+    print("Warning: HF_API_TOKEN not set. Set it to use Hugging Face Inference API for embeddings.")
+
+def generate_text_embedding(text: str) -> List[float]:
+    """Generate an embedding using Hugging Face Inference API to avoid heavy local models."""
+    if not HF_API_TOKEN:
+        raise ValueError("HF_API_TOKEN must be set to generate embeddings via Hugging Face Inference API.")
+
+    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HF_EMBEDDING_MODEL}"
+    headers = {"Authorization": f"Bearer {HF_API_TOKEN}", "Accept": "application/json"}
+    response = requests.post(api_url, json={"inputs": text, "truncate": True}, headers=headers, timeout=60)
+    response.raise_for_status()
+    data = response.json()
+
+    # The API returns nested lists: [token_embeddings] or [sentence_embedding]
+    # For sentence-transformers models with pooling, it returns a single vector.
+    # If it's token-level, average pool across tokens.
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+        # If first element is itself a list of floats, assume sentence vector
+        if all(isinstance(x, (int, float)) for x in data[0]):
+            # Heuristic: if shape is [dim] return as-is; if [tokens][dim], average
+            if all(isinstance(x, (int, float)) for x in data):
+                return [float(x) for x in data]
+            # Average across tokens
+            token_vectors = data
+            dim = len(token_vectors[0])
+            sums = [0.0] * dim
+            for vec in token_vectors:
+                for i, val in enumerate(vec):
+                    sums[i] += float(val)
+            return [s / max(1, len(token_vectors)) for s in sums]
+
+    # If response format unexpected, raise
+    raise RuntimeError("Unexpected embedding format from Hugging Face Inference API")
 
 # Initialize the FastAPI app
 app = FastAPI(
@@ -62,9 +95,8 @@ async def search_knowledge_base(search_query: SearchQuery):
     """
     query = search_query.query
 
-    # --- Step 1: Generate an embedding for the user's query ---
-    # The .tolist() is important to convert the numpy array into a regular list for the API call
-    query_embedding = model.encode(query).tolist()
+    # --- Step 1: Generate an embedding for the user's query (via HF Inference API) ---
+    query_embedding = generate_text_embedding(query)
 
     # --- Step 2: Call the Supabase database function ---
     # We are calling the 'match_health_documents' function we created in the Supabase SQL Editor.
