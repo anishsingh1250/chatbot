@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: chatbot
+    env: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+    
+    # If you later switch to a non-Docker deploy, you can remove `env: docker`
+    # and instead specify build and start commands.
+
